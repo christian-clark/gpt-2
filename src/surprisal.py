@@ -5,7 +5,7 @@ import model
 # maybe needs to be None?
 BATCH_SIZE = 1
 
-def get_per_word_surprisal(*, corpus, hparams, encoder):
+def get_per_subword_surprisal(*, corpus, hparams, encoder):
     start_token = encoder.encoder['<|endoftext|>']
     context = tf.fill([BATCH_SIZE, 1], start_token)
 

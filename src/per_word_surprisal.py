@@ -12,6 +12,10 @@ def get_subword_windows(encoded_text, context_size):
     '''Splits encoded_text, a list of subword IDs, into a list of
     overlapping windows of subwords, each of length <= context_size. These
     windows are what get fed into GPT-2.'''
+
+    # Need an even context_size for splitting the subwords into windows
+    if context_size % 2 == 1:
+        raise ValueError("context_size must be an even number")
     windows = list()
     while len(encoded_text) > context_size:
         windows.append(encoded_text[:context_size])
@@ -19,6 +23,18 @@ def get_subword_windows(encoded_text, context_size):
         encoded_text = encoded_text[int(context_size/2):]
     windows.append(encoded_text)
     return windows
+
+
+def combine_window_surprisals(window_surprisals, context_size):
+    '''Given the surprisal measurements for a list of overlapping windows,
+    returns the recombined list of subword surprisals.'''
+    # use all subword surprisals from the first window. For subsequent
+    # windows, the first context_size/2 terms will overlap with the
+    # previous window, so throw them out
+    subword_surprisals = window_surprisals[0]
+    for w in window_surprisals[1:]:
+        subword_surprisals.extend(w[int(context_size/2):])
+    return subword_surprisals
 
 
 def get_per_char_surprisal(subwords, subword_surps):
@@ -76,9 +92,6 @@ def per_word_surprisal(
     :context_size : the maximum context size allowed by the model (n_ctx). If the length of the input text exceeds context_size, the text is split into overlapping windows to calculate surprisal
     """
 
-    # Need an even context_size for splitting the subwords into windows
-    if context_size % 2 == 1:
-        raise ValueError("context_size must be an even number")
 
     models_dir = os.path.expanduser(os.path.expandvars(models_dir))
     hparams = model.default_hparams()
@@ -99,12 +112,11 @@ def per_word_surprisal(
     windows = get_subword_windows(enc_text, context_size)
 
     # 4. feed each window into GPT-2, get per-subword surprisals
-    subword_surprisals = list()
+    window_surprisals = list()
     for window in windows:
         with tf.Session(graph=tf.Graph()) as sess:
     
-            # TODO rename surprisal method
-            output = surprisal.get_per_word_surprisal(
+            output = surprisal.get_per_subword_surprisal(
                 corpus=window, hparams=hparams,
                 encoder=enc
             )
@@ -117,8 +129,9 @@ def per_word_surprisal(
             # containing per-subword surprisals. We assume no batching is used
             assert BATCH_SIZE == 1
             out = sess.run(output)
-            window_subword_surprisals = out[0]
-        subword_surprisals.extend(window_subword_surprisals)
+            surps = list(out[0])
+        window_surprisals.append(surps)
+    subword_surprisals = combine_window_surprisals(window_surprisals, context_size)
 
     # 5. "roll" surprisals together to get per-word surprisal
     word_surprisals = roll_subword_surprisal(
